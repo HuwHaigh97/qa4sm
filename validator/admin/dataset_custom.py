@@ -3,7 +3,7 @@ from validator.validation.globals import USER_DATASET_MIN_ID
 
 
 class DatasetAdmin(ModelAdmin):
-    list_display = ('id', 'short_name', 'user', 'file')
+    list_display = ('id', 'short_name', 'user', 'file', 'usage_count')
 
     def file(self, obj):
         if len(obj.user_dataset.all()) and obj.id >= USER_DATASET_MIN_ID:

@@ -5,8 +5,12 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.dispatch import receiver
 from django_countries.fields import CountryField
 from validator.models import DataManagementGroup
+from django.db.models.signals import post_delete, post_save
+import os 
+from shutil import rmtree
 
 
 class User(AbstractUser):
@@ -31,6 +35,8 @@ class User(AbstractUser):
     orcid = models.CharField(max_length=25, blank=True)
     space_limit = models.CharField(max_length=25, null=False, blank=True, choices=DATA_SPACE_LEVELS, default=BASIC)
 
+    expiry_notified = models.BooleanField(default=False)
+    isRemoved = models.BooleanField(default=False)
     @property
     def space_limit_value(self):
         # this property is added to be able to use it in api
@@ -60,3 +66,21 @@ class User(AbstractUser):
             r = reg_search(settings.ORICD_REGEX, self.orcid)
             if not r or len(r.groups()) < 1:
                 raise ValidationError({'orcid': 'Invalid ORCID identifier.', })
+
+
+@receiver(post_save, sender=User)
+def remove_userInfo(sender, instance, **kwargs):
+    
+    
+    # If user is active currently, has been notified and has hit the end of warning period, deactivate the account
+    if instance.is_active and instance.expiry_notified and instance.isRemoved:
+        instance.organisation = ''
+        instance.country = ''
+        instance.username = ''
+        instance.password = ''
+        instance.email = ''
+        instance.first_name = ''
+        instance.last_name = ''
+        instance.auth_token = ''
+        instance.is_active = False
+        instance.save()

@@ -89,7 +89,7 @@ export class ValidationrunService {
 
   deleteValidation(validationId: string): Observable<any> {
     const deleteUrl = deleteResultUrl.replace(zeroId, validationId);
-    return this.httpClient.delete(deleteUrl, {headers})
+    return this.httpClient.patch(deleteUrl + '/', {headers})
       .pipe(
         catchError(err => this.httpError.handleError(err, 'We could not delete your validation.'))
       );
@@ -170,7 +170,7 @@ export class ValidationrunService {
     validationId.forEach(id => {
       params = params.append('id', id);
     })
-    return this.httpClient.delete(removeMultipleValidationUrl, {params})
+    return this.httpClient.patch(removeMultipleValidationUrl, {params})
       .pipe(
         catchError(err => this.httpError.handleError(err, 'We could not remove selected validations.'))
       );

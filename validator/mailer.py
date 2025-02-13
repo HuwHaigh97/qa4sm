@@ -84,10 +84,10 @@ def send_val_expiry_notification(val_runs):
     __logger.info('Sending mail about expiry of validation {} to user {}...'.format(val_ids, user))
 
     if user is not None:
+        print('emailing')
         for val_run in val_runs:
             val_run.expiry_notified = True
             val_run.save()
-
         subject = '[QA4SM] Validation expiring soon'
         greetings_form = f'{user.first_name}  {user.last_name}' if user.first_name and user.last_name else user.username
         threshold_date = timezone.now() - timedelta(days=settings.VALIDATION_EXPIRY_DAYS)
@@ -96,18 +96,52 @@ def send_val_expiry_notification(val_runs):
         my_results_url = settings.SITE_URL + get_angular_url('validations')
 
         body = f'''Dear {greetings_form},
-        \nyour validations started before {threshold_date.date()} will expire soon. \nThey will be deleted automatically on {removal_date.date()} if you take no further action. \nIf you want to extend the validation\'s lifetime or archive it, please visit {my_results_url}(you will need to log in).
+        \nyour validations started before {threshold_date.date()} will expire soon. \nThey will be deleted automatically on {removal_date.date()} if you take no further action. \nIf you want to extend the validation\'s lifetime or archive it, please visit {my_results_url} (you will need to log in).
         \nPlease note that archived and published validations are not subjected to deletion. If you need assistance with archiving or publishing your results, please visit our help ({help_url}) page for detailed guidance and support.
         \nBest regards,
         \nQA4SM team
         '''
-
         if user.email:
             _send_email(recipients=[user.email],
                         subject=subject,
                         body=body)
+            
+            for val_run in val_runs:
+                val_run.expiry_notified = True
+                val_run.save()
+
         else:
             __logger.exception('The user has no email assigned')
+
+
+def send_account_expiry_notification(user, nDaysLeft):
+    __logger.info('Sending mail about expiry of account to user {}...'.format(user.id))
+
+    subject = '[QA4SM] User account expiring soon'
+    greetings_form = f'{user.first_name}  {user.last_name}' if user.first_name and user.last_name else user.username
+    removal_date = timezone.now() + timedelta(days=nDaysLeft)
+    help_url = settings.SITE_URL + get_angular_url('help')
+    
+    body = f'''Dear {greetings_form},
+        \nYour user account on the QA4SM portal has been marked as inactivate and will be deleted automatically on {removal_date.date()} if no further action is taken. \nIf you would like to avoid this please log in to your account. 
+        If you need assistance, please visit our help ({help_url}) page for detailed guidance and support.
+        \nKind regards,
+        \nQA4SM team
+        '''
+
+    if user.email:
+        _send_email(recipients=[user.email],
+                    subject=subject,
+                    body=body)
+        
+        if not user.expiry_notified:
+            user.expiry_notified = True # here so the email has to have been sent first 
+            user.save()
+    else:
+        __logger.exception('The user has no email assigned')
+
+    
+
 
 
 def send_new_user_signed_up(user):

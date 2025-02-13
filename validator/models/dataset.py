@@ -1,9 +1,11 @@
-from django.db import models
+from django.db import models, transaction
+from django.dispatch import receiver
 # from validator.models.filter import DataFilter
 from validator.models.variable import DataVariable
 from validator.models.version import DatasetVersion
+from django.db.models.signals import post_save
 from django.conf import settings
-
+from django.apps import apps
 
 class Dataset(models.Model):
     id = models.AutoField(primary_key=True)
@@ -27,6 +29,8 @@ class Dataset(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, blank=True, null=True)
     user_groups = models.ManyToManyField(to='DataManagementGroup', related_name='custom_datasets', null=True,
                                          blank=True)
+    
+    usage_count = models.IntegerField(default=0)
 
     # many-to-one relationships coming from other models:
     # dataset_configuration from DatasetConfiguration
@@ -62,3 +66,23 @@ class Dataset(models.Model):
             return val * 100 * 1e3
         else:
             return default
+
+@receiver(post_save, sender='validator.ValidationRun')
+def incrementUsage(sender, instance, created, **kwargs):
+    if created:
+
+        def update_dataset_usage():
+            Dataset = apps.get_model('validator', 'Dataset')  # Avoid circular import
+            usedSets = [
+                instance.spatial_reference_configuration,
+                instance.temporal_reference_configuration,
+                instance.scaling_ref
+            ] 
+        
+            for config in usedSets:
+                if config:
+                    datasetName = config.dataset
+                    Dataset.objects.filter(short_name=datasetName).update(usage_count=models.F('usage_count') + 1)
+
+        transaction.on_commit(update_dataset_usage)    
+

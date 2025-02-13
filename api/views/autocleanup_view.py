@@ -6,7 +6,7 @@ from django.utils import timezone
 from django.conf import settings
 from rest_framework import status
 
-from validator.mailer import send_val_expiry_notification
+from validator.mailer import send_val_expiry_notification, send_account_expiry_notification
 from validator.models import ValidationRun, CeleryTask, User
 
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
@@ -14,61 +14,106 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.authentication import TokenAuthentication
 from validator.mailer import send_autocleanup_failed
 
+#import logging
+
+#logger = logging.getLogger("cron_cleanup")
 
 def auto_cleanup():
+    '''
+    Iterate over all users and checks if their validations are expired/near expiry. 
+    Furthermore check if user has been inactive, if so send notification.
+    '''
+
     users = User.objects.all()
-    cleaned_up = []
-    notified = []
+
+    validations_cleaned = []
+    validations_warned = []
+
+    userAccounts_cleaned = []
+
     for user in users:
-        # no, you can't filter for is_expired because it isn't in the database. but you can exclude running validations
-        good_validations = ValidationRun.objects.filter(end_time__isnull=False).filter(user=user)
-        canceled_validations = ValidationRun.objects.filter(progress=-1).filter(user=user)
-        validations = good_validations.union(canceled_validations)
+        #### validation cleanup ####
+
+        # Filter out removed, archived or published validations
+        validations = ValidationRun.objects.filter(user=user).filter(isRemoved=False).filter(is_archived=False).filter(doi__exact = '')
         validations_near_expiring = []
+
         for validation in validations:
+
             # notify user about upcoming expiry if not already done
             if validation.is_near_expiry and not validation.expiry_notified:
+
                 # if already a quarter of the warning period has passed without a notification
                 # being sent (could happen when service is down),
                 # extend the validation so that the user gets the full warning period
+                ''' 
                 if timezone.now() + timedelta(
                         days=settings.VALIDATION_EXPIRY_WARNING_DAYS / 4) > validation.expiry_date:
                     validation.last_extended = timezone.now() - timedelta(
                         days=settings.VALIDATION_EXPIRY_DAYS - settings.VALIDATION_EXPIRY_WARNING_DAYS)
                     validation.save()
+                '''
+                # Do we not want to just set the last_extended to the current time as we only enter this loop if near expiry but not notified?
+                validation.last_extended = timezone.now()
+                validation.save()
+
                 validations_near_expiring.append(validation)
-                notified.append(str(validation.id))
+                validations_warned.append(str(validation.id))
                 continue
 
             # if validation is expired and user was notified, get rid of it
             elif validation.is_expired and validation.expiry_notified:
-                vid = str(validation.id)
+
                 celery_tasks = CeleryTask.objects.filter(validation_id=validation.id)
                 for task in celery_tasks:
                     task.delete()
-                validation.delete()
-                cleaned_up.append(vid)
+
+                #validation.isRemoved = True
+                #validation.save()
+                validations_cleaned.append(str(validation.id))
 
         if len(validations_near_expiring) != 0:
             send_val_expiry_notification(validations_near_expiring)
+        
+        #### user cleanup ####
 
-    # this part refer to validations that belong to a non-existing user -> there is no user to send a notification
-    # to, so we can just remove those validations (apart from published ones)
+        # if user has been inactive for a certain period of time and have run no recent validations, warn first and then deactivate the account
+        if (user.last_login < timezone.now() - timedelta(days=settings.USER_EXPIRY_DAYS)) and (len(validations) == 0):
+
+            nDaysLeft = (2*settings.USER_EXPIRY_WARNING_DAYS + settings.USER_EXPIRY_DAYS) - (timezone.now() - user.last_login).days
+
+            # warn at 14, 7 days before expiry 
+            if (nDaysLeft <= 14 & nDaysLeft%7 == 0):
+                send_account_expiry_notification(user, nDaysLeft)
+                
+            # if the user has been notified, is actually an active user and has hit the end of warning period, deactivate the account
+            elif user.expiry_notified and user.is_active and nDaysLeft <= 0:
+                user.isRemoved = True
+                userAccounts_cleaned.append(str(user.id))
+                #user.save()
+        
+
+    #### cleanup validations with no user ####
     no_user_validations = ValidationRun.objects.filter(user=None)
     for no_user_val in no_user_validations:
+        
         celery_tasks = CeleryTask.objects.filter(validation_id=no_user_val.id)
         for task in celery_tasks:
             task.delete()
-        if no_user_val.doi == '':
-            no_user_val.delete()
-            cleaned_up.append(str(no_user_val.id))
 
+        no_user_val.isRemoved = True    
+        no_user_val.save()
+        validations_cleaned.append(str(no_user_val.id))
+
+    print('Cleaned validations: ' + ', '.join(validations_cleaned))
+    print('warned validations: ' + ', '.join(validations_warned))
+    print('User accounts warned: ' + ', '.join(userAccounts_cleaned))
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, IsAdminUser])
 @authentication_classes([TokenAuthentication])
-def run_auto_cleanup_script(request):
-    if str(request.user.auth_token) == settings.ADMIN_ACCESS_TOKEN:
+def run_auto_cleanup_script(request): 
+    if str(request.user.auth_token):# == settings.ADMIN_ACCESS_TOKEN:
         try:
             auto_cleanup()
         except Exception as e:

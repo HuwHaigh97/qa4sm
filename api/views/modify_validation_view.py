@@ -1,5 +1,5 @@
 import json
-
+import os 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
@@ -216,9 +216,10 @@ def remove_validation(request, result_uuid):
     return response
 
 
-@api_view(['DELETE'])
+@api_view(['PATCH'])
 @permission_classes([IsAuthenticated])
 def delete_result(request, result_uuid):
+
     val_run = get_object_or_404(ValidationRun, pk=result_uuid)
 
     ## make sure only the owner of a validation can delete it (others are allowed to GET it, though)
@@ -229,23 +230,48 @@ def delete_result(request, result_uuid):
     if not val_run.is_unpublished or val_run.is_archived:
         return HttpResponse(status=status.HTTP_405_METHOD_NOT_ALLOWED)  # 405
 
-    val_run.delete()
+    val_run.isRemoved = True    
+    val_run.save()
+
     return HttpResponse(status=status.HTTP_200_OK)
 
 
-@api_view(['DELETE'])
+@api_view(['PATCH'])
 @permission_classes([IsAuthenticated])
 def delete_multiple_result(request):
-    id_list = request.GET.getlist('id')
+    
+    try:
+        id_list = [
+            update['value'] 
+            for update in request.data.get('params', {}).get('updates', [])
+            if update.get('param') == 'id'
+        ]
+    except (KeyError, AttributeError):
+        id_list = []
+        
+    if not id_list:
+        return JsonResponse({
+            'error': 'No validation IDs provided',
+            'received_data': str(request.data)
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    print("Final id_list:", id_list)
     validations_to_remove = (ValidationRun.objects.filter(id__in=id_list)
                              .filter(doi='')
                              .filter(is_archived=False)
                              .filter(user=request.user))
-
+    print("Validations to remove: ", validations_to_remove)
+    updated_count = 0
     for validation in validations_to_remove:
-        validation.delete()
+        print(f"Marking validation {validation.id} as removed")
+        validation.isRemoved = True    
+        validation.save()
+        updated_count += 1
 
-    return HttpResponse(status=status.HTTP_200_OK)
+    return JsonResponse({
+        'message': f'Successfully marked {updated_count} validations as removed',
+        'updated_count': updated_count
+    }, status=status.HTTP_200_OK)
 
 
 @api_view(['GET'])

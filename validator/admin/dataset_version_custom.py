@@ -2,7 +2,7 @@ from django.contrib.admin.options import ModelAdmin
 
 
 class DatasetVersionAdmin(ModelAdmin):
-    list_display = ('id', 'short_name', 'dataset', 'time_range_start', 'time_range_end')
+    list_display = ('id', 'short_name', 'dataset', 'time_range_start', 'time_range_end', 'usage_count')
 
     def dataset(self, obj):
         if len(obj.versions.all()):
